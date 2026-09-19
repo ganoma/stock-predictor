@@ -1,0 +1,9 @@
+services:
+  stock-predictor:
+    build: .
+    image: stock-predictor
+    ports:
+      - "3900:3900"
+    # 株価データは外部APIから都度取得しメモリ上に15分キャッシュするだけなので、
+    # 永続化するボリュームは不要。
+    restart: unless-stopped

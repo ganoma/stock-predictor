@@ -4,8 +4,25 @@
 
 ## 起動
 
+### Docker(推奨)
+
 ```bash
-node stock-predictor/server.mjs
+docker compose up -d
+```
+
+docker compose が無い環境では build + run で同じことができます。
+
+```bash
+docker build -t stock-predictor . && docker run -d --name stock-predictor -p 3900:3900 stock-predictor
+```
+
+いずれも http://localhost:3900 で開きます。ポートを変える場合は `-p 8080:3900`(compose なら `ports` を編集)。
+永続化するデータは無いのでボリュームは不要です。
+
+### Node.js を直接使う場合
+
+```bash
+node server.mjs
 # → http://localhost:3900
 ```
 
@@ -18,9 +35,10 @@ node stock-predictor/server.mjs
 
 ## ファイル構成
 
-- `server.mjs` — 静的配信 + Yahoo Finance APIプロキシ(cookie取得・キャッシュ・ホストフォールバック)
+- `server.mjs` — 静的配信 + 株価APIプロキシ(cookie取得・15分キャッシュ・Yahoo障害時はFTにフォールバック)
 - `public/index.html` — UI一式(検索、Canvasチャート、予測ロジックはクライアント側)
 - `symbols.json` — 銘柄辞書。JPX公式の上場企業一覧(data_j.xls)から生成
+- `Dockerfile` / `docker-compose.yml` — コンテナ定義。node:24-alpine・非rootユーザー(node)で実行、約230MB
 
 ## symbols.json の更新
 
