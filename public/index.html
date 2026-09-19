@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>株価予測アプリ</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #1a2130;
+    --panel2: #212a3d;
+    --text: #e8ecf4;
+    --muted: #8a94a8;
+    --accent: #4f8ef7;
+    --up: #2ecc8f;
+    --down: #f06060;
+    --band: rgba(79, 142, 247, 0.18);
+    --band2: rgba(79, 142, 247, 0.32);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; padding: 24px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+  .search-row { position: relative; margin-bottom: 16px; }
+  #searchInput {
+    width: 100%; padding: 12px 16px; font-size: 16px;
+    background: var(--panel); color: var(--text);
+    border: 1px solid #2c3548; border-radius: 10px; outline: none;
+  }
+  #searchInput:focus { border-color: var(--accent); }
+  #suggestions {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+    background: var(--panel2); border: 1px solid #2c3548; border-radius: 10px;
+    margin-top: 4px; overflow: hidden; display: none;
+  }
+  .suggestion {
+    padding: 10px 16px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px;
+    border-bottom: 1px solid #2c3548;
+  }
+  .suggestion:last-child { border-bottom: none; }
+  .suggestion:hover { background: #2a3550; }
+  .suggestion .sym { color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .suggestion .exch { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+  .control-group { display: flex; align-items: center; gap: 6px; }
+  .control-group label { color: var(--muted); font-size: 13px; }
+  select {
+    background: var(--panel); color: var(--text); border: 1px solid #2c3548;
+    border-radius: 8px; padding: 6px 10px; font-size: 14px;
+  }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--panel); border-radius: 12px; padding: 14px 16px; }
+  .card .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .card .value { font-size: 20px; font-weight: 700; }
+  .card .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .value.up { color: var(--up); }
+  .value.down { color: var(--down); }
+
+  .chart-panel { background: var(--panel); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .chart-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .chart-sub { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  #chartWrap { position: relative; width: 100%; }
+  canvas { width: 100%; display: block; }
+  #tooltip {
+    position: absolute; pointer-events: none; display: none;
+    background: #0b0f18ee; border: 1px solid #2c3548; border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; line-height: 1.7; white-space: nowrap; z-index: 5;
+  }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .lg-price::before { background: #e8ecf4; }
+  .lg-sma25::before { background: #f0b34e; }
+  .lg-sma75::before { background: #b06ef0; }
+  .lg-forecast::before { background: var(--accent); }
+  .lg-band::before { background: var(--band2); height: 10px; }
+
+  #status { color: var(--muted); font-size: 14px; padding: 30px 0; text-align: center; }
+  .disclaimer {
+    background: #2a2333; border: 1px solid #4a3b5c; border-radius: 10px;
+    padding: 12px 16px; font-size: 12px; color: #c9b8dd; line-height: 1.8;
+  }
+  #resultArea { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📈 株価予測アプリ</h1>
+  <div class="subtitle">会社名または銘柄コードで検索(例: トヨタ、Apple、7203.T、AAPL)</div>
+
+  <div class="search-row">
+    <input id="searchInput" type="text" placeholder="会社名・銘柄コードを入力してEnter" autocomplete="off">
+    <div id="suggestions"></div>
+  </div>
+
+  <div class="controls">
+    <div class="control-group">
+      <label>履歴期間</label>
+      <select id="rangeSelect">
+        <option value="1y">1年</option>
+        <option value="2y" selected>2年</option>
+        <option value="5y">5年</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>予測日数</label>
+      <select id="horizonSelect">
+        <option value="30" selected>30日</option>
+        <option value="60">60日</option>
+        <option value="90">90日</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="status">会社名を検索すると、過去の株価と将来予測が表示されます。</div>
+
+  <div id="resultArea">
+    <div class="cards">
+      <div class="card"><div class="label">現在値</div><div class="value" id="curPrice">-</div><div class="sub" id="curChange">-</div></div>
+      <div class="card"><div class="label" id="horizonLabel">30日後予測(中央値)</div><div class="value" id="predMedian">-</div><div class="sub" id="predRange">-</div></div>
+      <div class="card"><div class="label">年率ボラティリティ</div><div class="value" id="volValue">-</div><div class="sub">過去1年の日次リターンから推定</div></div>
+      <div class="card"><div class="label">トレンド(年率換算)</div><div class="value" id="driftValue">-</div><div class="sub">過去1年のドリフト</div></div>
+      <div class="card"><div class="label">上昇確率</div><div class="value" id="upProb">-</div><div class="sub" id="upProbSub">シミュレーションで現在値を上回った割合</div></div>
+    </div>
+
+    <div class="chart-panel">
+      <div class="chart-title" id="chartTitle">-</div>
+      <div class="chart-sub" id="chartSub">-</div>
+      <div id="chartWrap">
+        <canvas id="chart" height="420"></canvas>
+        <div id="tooltip"></div>
+      </div>
+      <div class="legend">
+        <span class="lg-price">終値</span>
+        <span class="lg-sma25">SMA25</span>
+        <span class="lg-sma75">SMA75</span>
+        <span class="lg-forecast">予測中央値</span>
+        <span class="lg-band">予測レンジ(薄: 5〜95%、濃: 25〜75%)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="disclaimer">
+    ⚠️ <b>免責事項:</b> この予測は過去の値動きの統計(幾何ブラウン運動によるモンテカルロシミュレーション)に基づく参考値であり、将来の株価を保証するものではありません。決算・ニュース・市場環境などの要因は考慮されていません。投資助言ではなく、教育・参考目的のツールです。投資判断はご自身の責任で行ってください。
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtNum = (v, cur) => {
+  if (v == null || !isFinite(v)) return '-';
+  const opts = v >= 1000 ? { maximumFractionDigits: 0 } : { maximumFractionDigits: 2 };
+  return v.toLocaleString('ja-JP', opts) + (cur ? ' ' + cur : '');
+};
+
+let state = null; // { symbol, name, currency, dates, closes, forecast }
+
+// ---------- 検索 ----------
+let searchTimer = null;
+$('searchInput').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (!q) { $('suggestions').style.display = 'none'; return; }
+  searchTimer = setTimeout(() => doSearch(q), 300);
+});
+$('searchInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const q = e.target.value.trim();
+    if (q) doSearch(q, true);
+  }
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.search-row')) $('suggestions').style.display = 'none';
+});
+
+async function doSearch(q, autoPickIfSymbol = false) {
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const data = await r.json();
+    const quotes = (data.quotes || []).filter((x) => x.symbol && (x.quoteType === 'EQUITY' || x.quoteType === 'ETF'));
+    // 入力がそのまま銘柄コードに一致したら即ロード
+    if (autoPickIfSymbol) {
+      const exact = quotes.find((x) => x.symbol.toUpperCase() === q.toUpperCase());
+      if (exact) { pick(exact.symbol, exact.shortname || exact.longname || exact.symbol); return; }
+      if (quotes.length === 1) { pick(quotes[0].symbol, quotes[0].shortname || quotes[0].symbol); return; }
+    }
+    const box = $('suggestions');
+    if (!quotes.length) { box.style.display = 'none'; return; }
+    box.innerHTML = quotes.map((x) =>
+      `<div class="suggestion" data-symbol="${x.symbol}" data-name="${(x.shortname || x.longname || x.symbol).replace(/"/g, '&quot;')}">
+        <span class="sym">${x.symbol}</span>
+        <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${x.shortname || x.longname || ''}</span>
+        <span class="exch">${x.exchDisp || x.exchange || ''}</span>
+      </div>`).join('');
+    box.style.display = 'block';
+    box.querySelectorAll('.suggestion').forEach((el) => {
+      el.addEventListener('click', () => pick(el.dataset.symbol, el.dataset.name));
+    });
+  } catch (err) {
+    $('status').textContent = '検索に失敗しました: ' + err;
+  }
+}
+
+function pick(symbol, name) {
+  $('suggestions').style.display = 'none';
+  $('searchInput').value = `${name} (${symbol})`;
+  loadSymbol(symbol, name);
+}
+
+$('rangeSelect').addEventListener('change', () => state && loadSymbol(state.symbol, state.name));
+$('horizonSelect').addEventListener('change', () => state && loadSymbol(state.symbol, state.name));
+
+// ---------- データ取得 ----------
+async function loadSymbol(symbol, name) {
+  $('status').style.display = 'block';
+  $('status').textContent = `${name} のデータを取得中...`;
+  $('resultArea').style.display = 'none';
+  try {
+    const range = $('rangeSelect').value;
+    const r = await fetch(`/api/chart?symbol=${encodeURIComponent(symbol)}&range=${range}`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    const result = data.chart && data.chart.result && data.chart.result[0];
+    if (!result) throw new Error((data.chart && data.chart.error && data.chart.error.description) || 'データが見つかりません');
+
+    const ts = result.timestamp || [];
+    const closesRaw = result.indicators.quote[0].close || [];
+    const dates = [], closes = [];
+    for (let i = 0; i < ts.length; i++) {
+      if (closesRaw[i] != null) { dates.push(new Date(ts[i] * 1000)); closes.push(closesRaw[i]); }
+    }
+    if (closes.length < 60) throw new Error('データが少なすぎるため予測できません(60営業日以上必要)');
+
+    const currency = result.meta.currency || '';
+    const horizon = parseInt($('horizonSelect').value, 10);
+    const forecast = runForecast(closes, horizon);
+
+    state = { symbol, name, currency, dates, closes, forecast, horizon };
+    render();
+  } catch (err) {
+    $('status').innerHTML = '';
+    $('status').textContent = 'エラー: ' + (err.message || err) + ' ';
+    const btn = document.createElement('button');
+    btn.textContent = '再試行';
+    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border-radius:8px;border:1px solid #2c3548;background:#4f8ef7;color:#fff;cursor:pointer;font-size:13px;';
+    btn.addEventListener('click', () => loadSymbol(symbol, name));
+    $('status').appendChild(btn);
+  }
+}
+
+// ---------- 予測(モンテカルロ GBM) ----------
+function runForecast(closes, horizon) {
+  // 直近1年(≒250営業日)の対数リターンからドリフトとボラティリティを推定
+  const window_ = Math.min(250, closes.length - 1);
+  const rets = [];
+  for (let i = closes.length - window_; i < closes.length; i++) {
+    rets.push(Math.log(closes[i] / closes[i - 1]));
+  }
+  const mu = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const variance = rets.reduce((a, b) => a + (b - mu) ** 2, 0) / (rets.length - 1);
+  const sigma = Math.sqrt(variance);
+
+  const S0 = closes[closes.length - 1];
+  const N_PATHS = 3000;
+  // paths[d] = その日の全パスの価格配列
+  const percentiles = { p5: [], p25: [], p50: [], p75: [], p95: [] };
+  let prices = new Float64Array(N_PATHS).fill(S0);
+  let upCount = 0;
+
+  // Box-Muller法による正規乱数
+  const randn = () => {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
+
+  const drift = mu - (sigma * sigma) / 2;
+  for (let d = 0; d < horizon; d++) {
+    for (let p = 0; p < N_PATHS; p++) {
+      prices[p] *= Math.exp(drift + sigma * randn());
+    }
+    const sorted = Float64Array.from(prices).sort();
+    percentiles.p5.push(sorted[Math.floor(N_PATHS * 0.05)]);
+    percentiles.p25.push(sorted[Math.floor(N_PATHS * 0.25)]);
+    percentiles.p50.push(sorted[Math.floor(N_PATHS * 0.50)]);
+    percentiles.p75.push(sorted[Math.floor(N_PATHS * 0.75)]);
+    percentiles.p95.push(sorted[Math.floor(N_PATHS * 0.95)]);
+  }
+  for (let p = 0; p < N_PATHS; p++) if (prices[p] > S0) upCount++;
+
+  return {
+    ...percentiles,
+    muAnnual: mu * 252,
+    sigmaAnnual: sigma * Math.sqrt(252),
+    upProb: upCount / N_PATHS,
+  };
+}
+
+function sma(arr, n) {
+  const out = new Array(arr.length).fill(null);
+  let sum = 0;
+  for (let i = 0; i < arr.length; i++) {
+    sum += arr[i];
+    if (i >= n) sum -= arr[i - n];
+    if (i >= n - 1) out[i] = sum / n;
+  }
+  return out;
+}
+
+// ---------- 描画 ----------
+function render() {
+  const { symbol, name, currency, dates, closes, forecast, horizon } = state;
+  $('status').style.display = 'none';
+  $('resultArea').style.display = 'block';
+
+  const last = closes[closes.length - 1];
+  const prev = closes[closes.length - 2];
+  const chg = ((last - prev) / prev) * 100;
+  $('curPrice').textContent = fmtNum(last, currency);
+  $('curChange').textContent = `前日比 ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+
+  const median = forecast.p50[horizon - 1];
+  const medChg = ((median - last) / last) * 100;
+  $('horizonLabel').textContent = `${horizon}日後予測(中央値)`;
+  $('predMedian').textContent = fmtNum(median, currency);
+  $('predMedian').className = 'value ' + (median >= last ? 'up' : 'down');
+  $('predRange').textContent = `${medChg >= 0 ? '+' : ''}${medChg.toFixed(1)}% / 90%区間: ${fmtNum(forecast.p5[horizon - 1])} 〜 ${fmtNum(forecast.p95[horizon - 1])}`;
+
+  $('volValue').textContent = (forecast.sigmaAnnual * 100).toFixed(1) + '%';
+  const dr = forecast.muAnnual * 100;
+  $('driftValue').textContent = `${dr >= 0 ? '+' : ''}${dr.toFixed(1)}%`;
+  $('driftValue').className = 'value ' + (dr >= 0 ? 'up' : 'down');
+  $('upProb').textContent = (forecast.upProb * 100).toFixed(0) + '%';
+  $('upProbSub').textContent = `${horizon}日後に現在値を上回る確率(シミュレーション)`;
+
+  $('chartTitle').textContent = `${name} (${symbol})`;
+  $('chartSub').textContent = `過去 ${dates.length} 営業日の終値と ${horizon} 営業日先までのモンテカルロ予測(3,000パス)`;
+
+  drawChart();
+}
+
+let chartGeom = null;
+function drawChart() {
+  const { dates, closes, forecast, horizon, currency } = state;
+  const canvas = $('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth;
+  const H = 420;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const padL = 64, padR = 16, padT = 12, padB = 28;
+  const n = closes.length, total = n + horizon;
+
+  const allVals = closes.concat(forecast.p5, forecast.p95);
+  let yMin = Math.min(...allVals), yMax = Math.max(...allVals);
+  const yPad = (yMax - yMin) * 0.06;
+  yMin -= yPad; yMax += yPad;
+
+  const x = (i) => padL + (i / (total - 1)) * (W - padL - padR);
+  const y = (v) => padT + (1 - (v - yMin) / (yMax - yMin)) * (H - padT - padB);
+  chartGeom = { x, y, padL, padR, W, H, total, n };
+
+  // グリッドとY軸ラベル
+  ctx.strokeStyle = '#2a3245'; ctx.fillStyle = '#8a94a8';
+  ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+  ctx.lineWidth = 1;
+  for (let g = 0; g <= 5; g++) {
+    const v = yMin + ((yMax - yMin) * g) / 5;
+    ctx.beginPath(); ctx.moveTo(padL, y(v)); ctx.lineTo(W - padR, y(v)); ctx.stroke();
+    ctx.fillText(fmtNum(v), padL - 8, y(v) + 4);
+  }
+  // X軸ラベル(日付)
+  ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(n / 6));
+  for (let i = 0; i < n; i += step) {
+    const d = dates[i];
+    ctx.fillText(`${d.getFullYear()}/${d.getMonth() + 1}`, x(i), H - 8);
+  }
+  ctx.fillText('予測→', x(n + horizon / 2), H - 8);
+
+  // 予測開始の縦線
+  ctx.strokeStyle = '#4a5670'; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(x(n - 1), padT); ctx.lineTo(x(n - 1), H - padB); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 予測バンド(5-95%)
+  const band = (lo, hi, color) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x(n - 1), y(closes[n - 1]));
+    for (let d = 0; d < horizon; d++) ctx.lineTo(x(n + d), y(hi[d]));
+    for (let d = horizon - 1; d >= 0; d--) ctx.lineTo(x(n + d), y(lo[d]));
+    ctx.closePath(); ctx.fill();
+  };
+  band(forecast.p5, forecast.p95, 'rgba(79,142,247,0.15)');
+  band(forecast.p25, forecast.p75, 'rgba(79,142,247,0.28)');
+
+  // ライン描画ヘルパー
+  const line = (vals, offset, color, width, dash) => {
+    ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < vals.length; i++) {
+      if (vals[i] == null) continue;
+      const px = x(i + offset), py = y(vals[i]);
+      if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+
+  line(sma(closes, 25), 0, '#f0b34e', 1.2);
+  line(sma(closes, 75), 0, '#b06ef0', 1.2);
+  line(closes, 0, '#e8ecf4', 1.6);
+  line([closes[n - 1], ...forecast.p50], n - 1, '#4f8ef7', 2, [6, 3]);
+}
+
+// ---------- ツールチップ ----------
+$('chart').addEventListener('mousemove', (e) => {
+  if (!state || !chartGeom) return;
+  const rect = e.target.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const { x, padL, W, padR, total, n } = chartGeom;
+  const i = Math.round(((mx - padL) / (W - padL - padR)) * (total - 1));
+  const tip = $('tooltip');
+  if (i < 0 || i >= total) { tip.style.display = 'none'; return; }
+
+  let html;
+  const { dates, closes, forecast, currency } = state;
+  if (i < n) {
+    const d = dates[i];
+    html = `<b>${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}</b><br>終値: ${fmtNum(closes[i], currency)}`;
+  } else {
+    const d = i - n;
+    html = `<b>${d + 1}営業日後(予測)</b><br>` +
+      `中央値: ${fmtNum(forecast.p50[d], currency)}<br>` +
+      `50%区間: ${fmtNum(forecast.p25[d])} 〜 ${fmtNum(forecast.p75[d])}<br>` +
+      `90%区間: ${fmtNum(forecast.p5[d])} 〜 ${fmtNum(forecast.p95[d])}`;
+  }
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  tip.style.left = Math.min(mx + 14, W - 220) + 'px';
+  tip.style.top = '20px';
+});
+$('chart').addEventListener('mouseleave', () => { $('tooltip').style.display = 'none'; });
+window.addEventListener('resize', () => state && drawChart());
+</script>
+</body>
+</html>
