@@ -5,9 +5,15 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3900
 
-# アプリ本体(サーバー・銘柄辞書・フロント一式)
-COPY server.mjs symbols.json ./
+# アプリ本体(サーバー・株価取得・銘柄辞書・フロント一式)
+COPY server.mjs prices-source.mjs build-prices.mjs symbols.json ./
 COPY public ./public
+# 株価スナップショットと銘柄コード→FT内部IDの対応表。
+# 無い場合はサーバーが起動後に自動生成する(初回は数十分かかる)。
+COPY prices.jso[n] ft-xids.jso[n] ./
+
+# 株価の自動更新がスナップショットを書き戻せるよう、アプリ配下をnodeユーザー所有にする
+RUN chown -R node:node /app
 
 EXPOSE 3900
 USER node

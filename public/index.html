@@ -88,13 +88,72 @@
     padding: 12px 16px; font-size: 12px; color: #c9b8dd; line-height: 1.8;
   }
   #resultArea { display: none; }
+
+  /* タブ切り替え */
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; border-bottom: 1px solid #2c3548; }
+  .tab {
+    padding: 10px 18px; cursor: pointer; font-size: 14px; color: var(--muted);
+    border: none; background: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* 予算スクリーニング */
+  .budget-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { color: var(--muted); font-size: 12px; }
+  #budgetInput {
+    width: 200px; padding: 10px 14px; font-size: 16px; text-align: right;
+    background: var(--panel); color: var(--text); border: 1px solid #2c3548; border-radius: 10px; outline: none;
+  }
+  #budgetInput:focus { border-color: var(--accent); }
+  .btn {
+    padding: 10px 20px; font-size: 14px; border-radius: 10px; border: none;
+    background: var(--accent); color: #fff; cursor: pointer; font-weight: 600;
+  }
+  .btn:hover { background: #3d7ce8; }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .preset {
+    padding: 6px 14px; font-size: 13px; border-radius: 999px; cursor: pointer;
+    background: var(--panel); color: var(--muted); border: 1px solid #2c3548;
+  }
+  .preset:hover { color: var(--text); border-color: var(--accent); }
+
+  .screen-summary { color: var(--muted); font-size: 13px; margin-bottom: 12px; line-height: 1.8; }
+  .screen-summary b { color: var(--text); font-size: 15px; }
+  /* 狭い画面では表を横スクロールさせる(ページ全体は横スクロールさせない) */
+  .table-wrap { background: var(--panel); border-radius: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #2a3245; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; background: var(--panel2); }
+  td.num, th.num { text-align: right; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #2a3550; }
+  tbody tr:last-child td { border-bottom: none; }
+  .code { color: var(--accent); font-weight: 600; }
+  .name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 600px) {
+    body { padding: 16px; }
+    .name { max-width: 150px; }
+    th, td { padding: 8px 10px; }
+  }
+  .ind { color: var(--muted); font-size: 12px; }
+  .bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--accent); vertical-align: middle; }
 </style>
 </head>
 <body>
 <div class="container">
   <h1>📈 株価予測アプリ</h1>
-  <div class="subtitle">会社名または銘柄コードで検索(例: トヨタ、Apple、7203.T、AAPL)</div>
+  <div class="subtitle">銘柄を検索して将来予測を見る / 予算内で買える銘柄を探す</div>
 
+  <div class="tabs">
+    <button class="tab active" data-panel="panelForecast">株価予測</button>
+    <button class="tab" data-panel="panelBudget">予算で探す</button>
+  </div>
+
+  <div class="panel active" id="panelForecast">
   <div class="search-row">
     <input id="searchInput" type="text" placeholder="会社名・銘柄コードを入力してEnter" autocomplete="off">
     <div id="suggestions"></div>
@@ -146,6 +205,59 @@
       </div>
     </div>
   </div>
+  </div><!-- /panelForecast -->
+
+  <div class="panel" id="panelBudget">
+    <div class="budget-row">
+      <div class="field">
+        <label for="budgetInput">予算(円)</label>
+        <input id="budgetInput" type="number" min="1" step="1000" value="100000" placeholder="100000">
+      </div>
+      <div class="field">
+        <label for="marketSelect">市場</label>
+        <select id="marketSelect">
+          <option value="">すべて</option>
+          <option value="プライム">プライム</option>
+          <option value="スタンダード">スタンダード</option>
+          <option value="グロース">グロース</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="industrySelect">業種</label>
+        <select id="industrySelect"><option value="">すべて</option></select>
+      </div>
+      <div class="field">
+        <label for="sortSelect">並び順</label>
+        <select id="sortSelect">
+          <option value="desc" selected>1単元が高い順</option>
+          <option value="asc">1単元が安い順</option>
+        </select>
+      </div>
+      <button class="btn" id="screenBtn">検索</button>
+    </div>
+
+    <div class="presets">
+      <button class="preset" data-budget="30000">3万円</button>
+      <button class="preset" data-budget="50000">5万円</button>
+      <button class="preset" data-budget="100000">10万円</button>
+      <button class="preset" data-budget="300000">30万円</button>
+      <button class="preset" data-budget="500000">50万円</button>
+      <button class="preset" data-budget="1000000">100万円</button>
+    </div>
+
+    <div class="screen-summary" id="screenSummary">予算を入力して検索すると、その金額で1単元(100株)買える銘柄を一覧表示します。</div>
+    <div class="table-wrap" id="screenTableWrap" style="display:none">
+      <table>
+        <thead>
+          <tr>
+            <th>コード</th><th>銘柄名</th><th>業種</th>
+            <th class="num">株価</th><th class="num">1単元(100株)</th><th class="num">予算に対する割合</th>
+          </tr>
+        </thead>
+        <tbody id="screenBody"></tbody>
+      </table>
+    </div>
+  </div><!-- /panelBudget -->
 
   <div class="disclaimer">
     ⚠️ <b>免責事項:</b> この予測は過去の値動きの統計(幾何ブラウン運動によるモンテカルロシミュレーション)に基づく参考値であり、将来の株価を保証するものではありません。決算・ニュース・市場環境などの要因は考慮されていません。投資助言ではなく、教育・参考目的のツールです。投資判断はご自身の責任で行ってください。
@@ -161,6 +273,115 @@ const fmtNum = (v, cur) => {
 };
 
 let state = null; // { symbol, name, currency, dates, closes, forecast }
+
+// ---------- タブ切り替え ----------
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => switchTab(tab.dataset.panel));
+});
+function switchTab(panelId) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.panel === panelId));
+  document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === panelId));
+  if (panelId === 'panelForecast' && state) drawChart(); // 非表示中は幅が取れないため描き直す
+}
+
+// ---------- 予算スクリーニング ----------
+let screenRows = []; // 直近の検索結果
+
+// 業種の選択肢をスナップショットから組み立てる
+(async () => {
+  try {
+    const meta = await (await fetch('/api/screen-meta')).json();
+    if (!meta.available) {
+      $('screenSummary').textContent =
+        '株価スナップショットがありません。サーバー側で `node build-prices.mjs` を実行してください。';
+      return;
+    }
+    const sel = $('industrySelect');
+    for (const ind of meta.industries) {
+      const o = document.createElement('option');
+      o.value = ind; o.textContent = ind;
+      sel.appendChild(o);
+    }
+    $('screenSummary').textContent =
+      `予算を入力して検索すると、その金額で1単元(${meta.unitShares}株)買える銘柄を一覧表示します。` +
+      `収録 ${meta.count.toLocaleString('ja-JP')} 銘柄 / 株価は ${meta.priceDate} 時点。`;
+  } catch { /* スクリーニングが使えなくても予測タブは動く */ }
+})();
+
+$('screenBtn').addEventListener('click', runScreen);
+$('budgetInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') runScreen(); });
+$('marketSelect').addEventListener('change', runScreen);
+$('industrySelect').addEventListener('change', runScreen);
+$('sortSelect').addEventListener('change', runScreen); // 並べ替えはサーバー側で行う
+document.querySelectorAll('.preset').forEach((b) => {
+  b.addEventListener('click', () => { $('budgetInput').value = b.dataset.budget; runScreen(); });
+});
+
+async function runScreen() {
+  const budget = Number($('budgetInput').value);
+  if (!isFinite(budget) || budget <= 0) {
+    $('screenSummary').textContent = '予算を正の数で入力してください。';
+    $('screenTableWrap').style.display = 'none';
+    return;
+  }
+  $('screenSummary').textContent = '検索中...';
+  try {
+    const params = new URLSearchParams({
+      budget: String(budget),
+      limit: '200',
+      sort: $('sortSelect').value,
+    });
+    if ($('marketSelect').value) params.set('market', $('marketSelect').value);
+    if ($('industrySelect').value) params.set('industry', $('industrySelect').value);
+    const data = await (await fetch('/api/screen?' + params)).json();
+    if (data.error) throw new Error(data.error);
+    screenRows = data.rows;
+    renderScreen(data, budget);
+  } catch (err) {
+    $('screenSummary').textContent = 'エラー: ' + (err.message || err);
+    $('screenTableWrap').style.display = 'none';
+  }
+}
+
+function renderScreen(d, b) {
+  const rows = screenRows;
+
+  if (!rows.length) {
+    $('screenSummary').textContent =
+      `予算 ${b.toLocaleString('ja-JP')} 円では、1単元(${d.unitShares}株)買える銘柄が見つかりませんでした。` +
+      `最も安い銘柄でも予算を超えています。`;
+    $('screenTableWrap').style.display = 'none';
+    return;
+  }
+
+  const order = $('sortSelect').value === 'asc' ? '1単元が安い順' : '1単元が高い順';
+  $('screenSummary').innerHTML =
+    `予算 ${b.toLocaleString('ja-JP')} 円で1単元(${d.unitShares}株)買える銘柄は <b>${d.matched.toLocaleString('ja-JP')} 件</b>` +
+    `(収録 ${d.universe.toLocaleString('ja-JP')} 銘柄中)。` +
+    `${order}に ${rows.length} 件を表示 / 株価は ${d.priceDate} 時点の終値。行をクリックすると予測タブで開きます。`;
+
+  $('screenBody').innerHTML = rows.map((r) => `
+    <tr data-symbol="${r.symbol}" data-name="${r.name.replace(/"/g, '&quot;')}">
+      <td class="code">${r.symbol.replace('.T', '')}</td>
+      <td class="name" title="${r.name.replace(/"/g, '&quot;')}">${r.name}</td>
+      <td class="ind">${r.industry === '-' ? '' : r.industry}</td>
+      <td class="num">${r.price.toLocaleString('ja-JP')}</td>
+      <td class="num">${Math.round(r.unitCost).toLocaleString('ja-JP')}</td>
+      <td class="num">
+        <span class="bar" style="width:${Math.max(2, Math.round(r.budgetRatio * 60))}px"></span>
+        ${Math.round(r.budgetRatio * 100)}%
+      </td>
+    </tr>`).join('');
+
+  $('screenBody').querySelectorAll('tr').forEach((tr) => {
+    tr.addEventListener('click', () => {
+      switchTab('panelForecast');
+      $('searchInput').value = `${tr.dataset.name} (${tr.dataset.symbol})`;
+      loadSymbol(tr.dataset.symbol, tr.dataset.name);
+    });
+  });
+  $('screenTableWrap').style.display = 'block';
+}
 
 // ---------- 検索 ----------
 let searchTimer = null;
