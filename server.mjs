@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildSnapshot, readJson } from './prices-source.mjs';
 
 const PORT = process.env.PORT || 3900;
 const PUBLIC_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
@@ -11,6 +12,43 @@ const PUBLIC_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
 const SYMBOLS = JSON.parse(
   await readFile(join(fileURLToPath(new URL('.', import.meta.url)), 'symbols.json'), 'utf-8'),
 );
+
+const DIR = fileURLToPath(new URL('.', import.meta.url));
+
+// 予算スクリーニング用の株価スナップショット。無くてもアプリの他の機能は動く。
+let PRICES = await readJson(DIR, 'prices.json', null);
+
+// 株価は日足の終値なので、1日1回更新すれば足りる。
+// REFRESH_HOURS=0 で自動更新を止められる(手動の build-prices.mjs だけを使う運用)。
+const REFRESH_HOURS = Number(process.env.REFRESH_HOURS ?? 24);
+
+let refreshing = false;
+async function refreshPrices(reason) {
+  if (refreshing) return;
+  refreshing = true;
+  console.log(`[prices] 株価スナップショットを更新します (${reason})`);
+  try {
+    // 既存のスナップショットがあるときは全件取り直して最新の終値に入れ替える
+    PRICES = await buildSnapshot({
+      dir: DIR,
+      full: Boolean(PRICES && PRICES.count),
+      log: (m) => console.log('[prices]', m),
+    });
+  } catch (e) {
+    console.log('[prices] 更新に失敗しました:', e.message);
+  } finally {
+    refreshing = false;
+  }
+}
+
+// スナップショットが古い(または無い)ときだけ、起動直後に裏で取得する
+function scheduleRefresh() {
+  if (!REFRESH_HOURS) return;
+  const intervalMs = REFRESH_HOURS * 3600 * 1000;
+  const ageMs = PRICES && PRICES.updatedAt ? Date.now() - Date.parse(PRICES.updatedAt) : Infinity;
+  if (ageMs >= intervalMs) refreshPrices(PRICES ? '前回更新から時間が経過' : 'スナップショット未作成');
+  setInterval(() => refreshPrices('定期更新'), intervalMs).unref();
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -171,6 +209,44 @@ function searchLocal(q) {
   }));
 }
 
+// 予算内で1単元買える銘柄を抽出する。
+// 東証の内国株式は売買単位が100株に統一されているので、1単元の金額は株価×100。
+function screenByBudget(budget, { market, industry, limit, sort } = {}) {
+  const unit = (PRICES && PRICES.unitShares) || 100;
+  const meta = new Map(SYMBOLS.map((e) => [e.s, e]));
+  const rows = [];
+  for (const [symbol, price] of Object.entries(PRICES.prices)) {
+    const cost = price * unit;
+    if (cost > budget) continue;
+    const e = meta.get(symbol);
+    if (!e) continue;
+    if (market && !e.x.includes(market)) continue;
+    if (industry && e.i !== industry) continue;
+    rows.push({
+      symbol,
+      name: e.n,
+      market: e.x,
+      industry: e.i,
+      price,
+      unitCost: cost,
+      budgetRatio: cost / budget,
+    });
+  }
+  // 並べ替えは件数を絞る前に行う(絞ってから反転すると最安値が出てこない)。
+  // 同額なら銘柄コード順にして順序を安定させる。
+  const dir = sort === 'asc' ? 1 : -1;
+  rows.sort((a, b) => dir * (a.unitCost - b.unitCost) || a.symbol.localeCompare(b.symbol));
+  return {
+    unitShares: unit,
+    priceDate: PRICES.priceDate,
+    updatedAt: PRICES.updatedAt,
+    source: PRICES.source,
+    universe: Object.keys(PRICES.prices).length,
+    matched: rows.length,
+    rows: rows.slice(0, limit || 200),
+  };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
@@ -206,6 +282,55 @@ const server = createServer(async (req, res) => {
     return res.end(result.body);
   }
 
+  // 予算スクリーニング(スナップショットから即座に絞り込む)
+  if (url.pathname === '/api/screen') {
+    const json = (status, obj) => {
+      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(obj));
+    };
+    if (!PRICES) {
+      return json(503, {
+        error: refreshing
+          ? '株価スナップショットを作成中です。数分後にもう一度お試しください。'
+          : '株価スナップショット(prices.json)がありません。`node build-prices.mjs` を実行して作成してください。',
+      });
+    }
+    const budget = Number(url.searchParams.get('budget'));
+    if (!isFinite(budget) || budget <= 0) {
+      return json(400, { error: '予算を正の数で指定してください。' });
+    }
+    return json(
+      200,
+      screenByBudget(budget, {
+        market: url.searchParams.get('market') || '',
+        industry: url.searchParams.get('industry') || '',
+        limit: Number(url.searchParams.get('limit')) || 200,
+        sort: url.searchParams.get('sort') === 'asc' ? 'asc' : 'desc',
+      }),
+    );
+  }
+
+  // スクリーニングの絞り込み用に、スナップショットの概要と業種一覧を返す
+  if (url.pathname === '/api/screen-meta') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    if (!PRICES) return res.end(JSON.stringify({ available: false }));
+    const industries = [
+      ...new Set(
+        SYMBOLS.filter((e) => PRICES.prices[e.s] != null && e.i !== '-').map((e) => e.i),
+      ),
+    ].sort((a, b) => a.localeCompare(b, 'ja'));
+    return res.end(
+      JSON.stringify({
+        available: true,
+        unitShares: PRICES.unitShares,
+        priceDate: PRICES.priceDate,
+        count: Object.keys(PRICES.prices).length,
+        source: PRICES.source,
+        industries,
+      }),
+    );
+  }
+
   // 静的ファイル
   let path = url.pathname === '/' ? '/index.html' : url.pathname;
   try {
@@ -220,4 +345,8 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`stock-predictor running at http://localhost:${PORT}`);
+  if (PRICES) {
+    console.log(`[prices] ${PRICES.count} 銘柄 / 株価日付 ${PRICES.priceDate}`);
+  }
+  scheduleRefresh();
 });
